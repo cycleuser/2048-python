@@ -210,7 +210,8 @@ Respond with ONLY one word: UP, DOWN, LEFT, or RIGHT
                 else:
                     ai_move = random.choice(valid_moves)
             
-            self.msleep(self.move_delay)
+            # 只有很短的延迟来确保UI能够更新
+            self.msleep(100)
             
             if self.running:
                 self.move_signal.emit(ai_move)
@@ -678,7 +679,7 @@ class GameGrid(QMainWindow):
         
         # Instructions
         instructions = QLabel(
-            "🎮 人类游戏: 方向键/WASD移动 | 🤖 AI游戏: 选择模型后点击'开始AI' | ESC/空格: 停止AI | F11: 全屏"
+            "🎮 人类游戏: 方向键/WASD移动 | 🤖 AI游戏: 选择模型后点击'开始AI' | ESC: 停止AI/退出 | F11: 全屏"
         )
         instructions.setAlignment(Qt.AlignmentFlag.AlignCenter)
         instructions.setStyleSheet("color: black; font-size: 14px; margin: 10px; font-weight: bold;")
@@ -781,18 +782,7 @@ class GameGrid(QMainWindow):
         refresh_btn.clicked.connect(self.refresh_models)
         first_row.addWidget(refresh_btn)
         
-        # 速度设置
-        speed_label = QLabel("速度:")
-        speed_label.setFixedWidth(50)
-        first_row.addWidget(speed_label)
-        
-        self.speed_spin = QSpinBox()
-        self.speed_spin.setFixedSize(100, 35)
-        self.speed_spin.setMinimum(500)
-        self.speed_spin.setMaximum(5000)
-        self.speed_spin.setValue(2000)
-        self.speed_spin.setSuffix("ms")
-        first_row.addWidget(self.speed_spin)
+
         
         first_row.addStretch()
         layout.addLayout(first_row)
@@ -883,14 +873,13 @@ class GameGrid(QMainWindow):
         
         # 开始AI模式
         self.selected_model = current_data
-        self.move_delay = self.speed_spin.value()
+        self.move_delay = 800  # 固定800ms延迟，既能看清AI移动又不会太慢
         
         self.ai_mode = True
         self.game_mode = f"AI ({self.selected_model})"
         self.start_ai_btn.setEnabled(False)
         self.stop_ai_btn.setEnabled(True)
         self.model_combo.setEnabled(False)
-        self.speed_spin.setEnabled(False)
         
         self.status_label.setText(f"🤖 AI ({self.selected_model}) 正在思考...")
         self.make_ai_move()
@@ -907,7 +896,6 @@ class GameGrid(QMainWindow):
         self.start_ai_btn.setEnabled(True)
         self.stop_ai_btn.setEnabled(False)
         self.model_combo.setEnabled(True)
-        self.speed_spin.setEnabled(True)
         self.status_label.setText("AI已停止 - 人类控制")
     
     def refresh_models(self):
@@ -1019,8 +1007,8 @@ class GameGrid(QMainWindow):
             if self.ai_mode:
                 state = game_state(self.matrix)
                 if state == 'not over':
-                    # Schedule next move
-                    QTimer.singleShot(100, self.make_ai_move)
+                    # 较短延迟让AI游戏更流畅，但仍能看清移动
+                    QTimer.singleShot(self.move_delay, self.make_ai_move)
                 else:
                     self.stop_ai_mode()
     
@@ -1071,7 +1059,6 @@ class GameGrid(QMainWindow):
         self.start_ai_btn.setEnabled(True)
         self.stop_ai_btn.setEnabled(False)
         self.model_combo.setEnabled(True)
-        self.speed_spin.setEnabled(True)
         
         self.update_grid_cells()
         self.update_info()
@@ -1172,10 +1159,11 @@ class GameGrid(QMainWindow):
         
         if key == Qt.Key.Key_Escape:
             if self.ai_mode:
-                # ESC键快速停止AI
+                # ESC键停止AI，不退出游戏
                 self.stop_ai_mode()
-                self.status_label.setText("AI已停止 - 按ESC键停止")
+                self.status_label.setText("AI已停止 - 可以手动游戏或重新开始AI")
             else:
+                # 只有在非AI模式下ESC才退出游戏
                 if self.moves_count > 0:
                     self.save_game_result()
                 self.close()
