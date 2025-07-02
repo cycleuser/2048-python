@@ -145,11 +145,35 @@ def calculate_score(matrix):
 def matrix_to_string(matrix):
     return '\n'.join([' '.join([str(cell).rjust(4) for cell in row]) for row in matrix])
 
+def get_valid_moves(matrix):
+    """获取当前棋盘状态下的有效移动方向"""
+    valid_moves = []
+    
+    # 测试每个方向是否会改变棋盘状态
+    moves_to_test = [
+        ('UP', up),
+        ('DOWN', down), 
+        ('LEFT', left),
+        ('RIGHT', right)
+    ]
+    
+    for move_name, move_func in moves_to_test:
+        # 创建副本进行测试
+        test_matrix = [row[:] for row in matrix]  # 更快的浅拷贝
+        result, changed = move_func(test_matrix)
+        if changed:
+            valid_moves.append(move_name)
+    
+    return valid_moves
+
 # ==================== AI WORKER THREAD ====================
 class AIWorker(QThread):
     move_signal = Signal(str)
     error_signal = Signal(str)
     thinking_signal = Signal(str)
+    
+    # 简单的AI决策缓存
+    _move_cache = {}
     
     def __init__(self, matrix, model_name, move_delay=2000):
         super().__init__()
@@ -164,54 +188,154 @@ class AIWorker(QThread):
             return
             
         try:
-            self.thinking_signal.emit("AI thinking...")
+            # 首先获取当前棋盘的有效移动
+            valid_moves = get_valid_moves(self.matrix)
             
-            board_str = matrix_to_string(self.matrix)
-            current_score = calculate_score(self.matrix)
+            if not valid_moves:
+                # 没有有效移动，游戏结束
+                self.error_signal.emit("No valid moves available - game over")
+                return
             
-            prompt = f"""
-You are playing the 2048 game. Your goal is to reach the tile 2048 by combining tiles.
+            # 创建包含有效移动的缓存键
+            board_state = tuple(tuple(row) for row in self.matrix)
+            valid_moves_key = tuple(sorted(valid_moves))
+            cache_key = (board_state, valid_moves_key)
+            
+            # 检查缓存
+            if cache_key in AIWorker._move_cache:
+                ai_move = AIWorker._move_cache[cache_key]
+                print(f"Using cached move: {ai_move} (from valid: {valid_moves})")
+            else:
+                # 没有缓存，需要调用AI模型
+                board_str = matrix_to_string(self.matrix)
+                valid_moves_str = ', '.join(valid_moves)
+                
+                # 分析棋盘状态并生成智能策略建议
+                max_tile = max(max(row) for row in self.matrix)
+                
+                # 找到最大数字的位置
+                max_pos = None
+                for i in range(len(self.matrix)):
+                    for j in range(len(self.matrix[0])):
+                        if self.matrix[i][j] == max_tile:
+                            max_pos = (i, j)
+                            break
+                    if max_pos:
+                        break
+                
+                # 生成基于位置的策略建议
+                strategy_advice = ""
+                if max_pos:
+                    row, col = max_pos
+                    if max_tile >= 256:
+                        if row >= 2 and col >= 2:  # 在右下角附近
+                            strategy_advice = "Good! Keep building in bottom-right corner. "
+                        else:
+                            strategy_advice = "Move largest tile to bottom-right corner! "
+                    elif max_tile >= 64:
+                        strategy_advice = "Start moving large tiles to corners. "
+                    else:
+                        strategy_advice = "Build up tiles before positioning. "
+                
+                # 基于可用移动给出具体建议
+                move_advice = ""
+                if len(valid_moves) > 1:
+                    if max_tile >= 128:
+                        if 'RIGHT' in valid_moves and 'DOWN' in valid_moves:
+                            move_advice = "Prefer RIGHT/DOWN to build corner."
+                        elif 'RIGHT' in valid_moves:
+                            move_advice = "RIGHT keeps corner strategy."
+                        elif 'DOWN' in valid_moves:
+                            move_advice = "DOWN maintains corner build."
+                
+                prompt = f"""Playing 2048 - merge tiles to reach 2048!
 
-Current board state:
+Current board:
 {board_str}
 
-Current score: {current_score}
+Max tile: {max_tile}
+{strategy_advice}{move_advice}
 
-Game rules:
-- Use arrow keys to move tiles: UP, DOWN, LEFT, RIGHT
-- When two tiles with the same number touch, they merge into one
-- Each move adds a new tile (usually 2) to the board
-- The game ends when no more moves are possible
+Valid moves: {valid_moves_str}
 
-Please analyze the current board and choose the BEST move from: UP, DOWN, LEFT, RIGHT
+Choose smartly - answer with ONE word only: {' or '.join(valid_moves)}
 
-Consider:
-1. Creating larger numbers by merging tiles
-2. Keeping the largest numbers in corners
-3. Maintaining open spaces
-4. Setting up future merges
+Best move:"""
 
-Respond with ONLY one word: UP, DOWN, LEFT, or RIGHT
-"""
-
-            response = ollama.chat(
-                model=self.model_name,
-                messages=[{'role': 'user', 'content': prompt}]
-            )
-            
-            ai_move = response['message']['content'].strip().upper()
-            
-            valid_moves = ['UP', 'DOWN', 'LEFT', 'RIGHT']
-            if ai_move not in valid_moves:
-                for move in valid_moves:
-                    if move in ai_move:
-                        ai_move = move
-                        break
+                response = ollama.chat(
+                    model=self.model_name,
+                    messages=[{'role': 'user', 'content': prompt}],
+                    options={
+                        'num_predict': 1,  # 只生成1个token
+                        'temperature': 0.0,  # 完全确定性
+                        'top_p': 1.0,
+                        'top_k': 4,  # 限制选择范围
+                        'stop': ['\n', ' ', '.', ':'],  # 更严格的停止条件
+                        'repeat_penalty': 1.0  # 避免重复
+                    }
+                )
+                
+                ai_response = response['message']['content'].strip()
+                ai_move = ai_response.upper()
+                
+                # 清理AI输出，移除常见的无关内容
+                ai_move = ai_move.replace('<THINK>', '').replace('</THINK>', '')
+                ai_move = ai_move.replace('THINK:', '').replace('THINKING:', '')
+                ai_move = ai_move.replace('MOVE:', '').replace('ANSWER:', '')
+                ai_move = ai_move.strip()
+                
+                # 验证AI选择的移动是否有效
+                if ai_move not in valid_moves:
+                    print(f"AI原始输出: '{ai_response}'")
+                    print(f"处理后: '{ai_move}'")
+                    print(f"有效移动: {valid_moves}")
+                    
+                    # 更智能的匹配策略
+                    best_match = None
+                    
+                    # 1. 精确匹配任何有效移动
+                    for move in valid_moves:
+                        if move in ai_move:
+                            best_match = move
+                            print(f"找到精确匹配: {move}")
+                            break
+                    
+                    # 2. 如果没有精确匹配，尝试部分匹配
+                    if not best_match:
+                        for move in valid_moves:
+                            if any(char in ai_move for char in move):
+                                best_match = move
+                                print(f"找到部分匹配: {move}")
+                                break
+                    
+                    # 3. 基于策略的智能选择
+                    if not best_match:
+                        max_tile = max(max(row) for row in self.matrix)
+                        if max_tile >= 64:
+                            # 优先选择不破坏角落结构的移动
+                            if 'RIGHT' in valid_moves and 'DOWN' in valid_moves:
+                                best_match = random.choice(['RIGHT', 'DOWN'])
+                            elif 'RIGHT' in valid_moves:
+                                best_match = 'RIGHT'
+                            elif 'DOWN' in valid_moves:
+                                best_match = 'DOWN'
+                            else:
+                                best_match = valid_moves[0]
+                        else:
+                            best_match = random.choice(valid_moves)
+                        print(f"策略选择: {best_match}")
+                    
+                    ai_move = best_match
                 else:
-                    ai_move = random.choice(valid_moves)
+                    print(f"AI有效选择: {ai_move} (从 {valid_moves})")
+                
+                # 缓存决策 (限制缓存大小避免内存爆炸)
+                if len(AIWorker._move_cache) < 1000:
+                    AIWorker._move_cache[cache_key] = ai_move
+                    print(f"New AI move cached: {ai_move} from valid {valid_moves} (cache size: {len(AIWorker._move_cache)})")
             
-            # 只有很短的延迟来确保UI能够更新
-            self.msleep(100)
+            # 移除延迟，让响应更快
+            # self.msleep(100)  # 已移除，提高响应速度
             
             if self.running:
                 self.move_signal.emit(ai_move)
@@ -873,7 +997,7 @@ class GameGrid(QMainWindow):
         
         # 开始AI模式
         self.selected_model = current_data
-        self.move_delay = 800  # 固定800ms延迟，既能看清AI移动又不会太慢
+        self.move_delay = 150  # 减少到150ms，让AI游戏非常快速
         
         self.ai_mode = True
         self.game_mode = f"AI ({self.selected_model})"
@@ -881,7 +1005,7 @@ class GameGrid(QMainWindow):
         self.stop_ai_btn.setEnabled(True)
         self.model_combo.setEnabled(False)
         
-        self.status_label.setText(f"🤖 AI ({self.selected_model}) 正在思考...")
+        self.status_label.setText(f"🤖 AI游戏启动 - {self.selected_model}")
         self.make_ai_move()
     
     def stop_ai_mode(self):
@@ -987,7 +1111,8 @@ class GameGrid(QMainWindow):
         self.ai_worker = AIWorker(copy.deepcopy(self.matrix), self.selected_model, self.move_delay)
         self.ai_worker.move_signal.connect(self.handle_ai_move)
         self.ai_worker.error_signal.connect(self.handle_ai_error)
-        self.ai_worker.thinking_signal.connect(self.handle_ai_thinking)
+        # 移除thinking信号连接以提高性能
+        # self.ai_worker.thinking_signal.connect(self.handle_ai_thinking)
         self.ai_worker.start()
     
     def handle_ai_move(self, move):
@@ -1000,16 +1125,38 @@ class GameGrid(QMainWindow):
         }
         
         if move in move_map:
+            # 保存移动前的矩阵状态
+            old_matrix = copy.deepcopy(self.matrix)
+            
+            # 执行移动
             self.execute_move(move_map[move])
-            self.status_label.setText(f"🤖 AI移动: {move} | 模型: {self.selected_model}")
+            
+            # 验证移动是否真的改变了游戏状态
+            if self.matrix == old_matrix:
+                print(f"警告: AI移动 {move} 没有改变游戏状态!")
+                # 如果移动无效，立即尝试下一步（避免卡住）
+                QTimer.singleShot(50, self.make_ai_move)
+                return
+            
+            # 减少状态更新频率，只显示关键信息
+            if self.moves_count % 10 == 0:  # 每10步更新一次状态
+                score = calculate_score(self.matrix)
+                self.status_label.setText(f"🤖 AI: {self.selected_model} | 移动: {self.moves_count} | 分数: {score}")
             
             # Continue AI play if still in AI mode and game not over
             if self.ai_mode:
                 state = game_state(self.matrix)
                 if state == 'not over':
-                    # 较短延迟让AI游戏更流畅，但仍能看清移动
+                    # 快速连续AI移动，只保留最小延迟确保UI更新
                     QTimer.singleShot(self.move_delay, self.make_ai_move)
                 else:
+                    # 游戏结束，显示最终结果
+                    score = calculate_score(self.matrix)
+                    max_tile = max(max(row) for row in self.matrix)
+                    if state == 'win':
+                        self.status_label.setText(f"🎉 AI获胜! 分数: {score} | 最大方块: {max_tile}")
+                    else:
+                        self.status_label.setText(f"😞 AI游戏结束 | 分数: {score} | 最大方块: {max_tile}")
                     self.stop_ai_mode()
     
     def handle_ai_error(self, error_msg):
@@ -1048,6 +1195,9 @@ class GameGrid(QMainWindow):
         # Save previous game if it had moves
         if hasattr(self, 'start_time') and self.start_time and self.moves_count > 0:
             self.save_game_result()
+        
+        # 清理AI缓存以获得新鲜的决策
+        AIWorker._move_cache.clear()
         
         self.matrix = new_game(GRID_LEN)
         self.history_matrixs = []
