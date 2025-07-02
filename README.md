@@ -1,25 +1,56 @@
-2048 Python (PySide6 Version)
-==============================
+2048 Python (AI Enhanced Version)
+===================================
 
 [![Run on Repl.it](https://repl.it/badge/github/yangshun/2048-python)](https://repl.it/github/yangshun/2048-python)
 
 ---
 
-**⚠️NOTE⚠️**: This is a PySide6 version of the original tkinter-based 2048 game, featuring enhanced UI and additional functionality.
+**🤖 NEW: AI Enhanced Version Available!**
+
+This project now includes an AI-enhanced version that integrates with Ollama to allow large language models to play 2048 autonomously, with comprehensive game statistics and performance tracking.
 
 ---
 
-Based on the popular game [2048](https://github.com/gabrielecirulli/2048) by Gabriele Cirulli. The game's objective is to slide numbered tiles on a grid to combine them to create a tile with the number 2048. This version uses PySide6 for a modern, responsive interface!
+Based on the popular game [2048](https://github.com/gabrielecirulli/2048) by Gabriele Cirulli. The game's objective is to slide numbered tiles on a grid to combine them to create a tile with the number 2048. This version uses PySide6 for a modern, responsive interface and includes AI capabilities!
 
 ![screenshot](img/screenshot.png)
 
+## 🚀 Quick Start
+
+### AI Enhanced Version (Recommended)
+```bash
+# Easy launch with dependency checking
+python start_ai_game.py
+
+# Or use the batch file on Windows
+start_ai_game.bat
+```
+
+### Original Version
+```bash
+# GUI version (standalone)
+python game.py
+
+# Console version
+python console_game.py
+```
+
 ## Features
+
+### 🤖 AI Features (New!)
+- **Ollama Integration**: Connect any local Ollama model to play 2048
+- **Model Selection**: Choose from available models in your Ollama installation
+- **AI vs Human Comparison**: Track performance differences between AI and human players
+- **Configurable AI Speed**: Adjust move delay from 0.5 to 10 seconds
+- **Live AI Status**: See what the AI is thinking in real-time
+- **Game Statistics**: Comprehensive tracking of all games with export capability
 
 ### GUI版本特性
 - **Modern PySide6 Interface**: Enhanced visual experience with Qt framework
 - **Fullscreen Support**: Press F11 to toggle fullscreen mode
 - **Responsive Layout**: Game board maintains square aspect ratio and scales with window size
 - **Undo Function**: Press 'B' to undo the last move
+- **Real-time Statistics**: Live score, move count, elapsed time display
 - **Multiple Control Schemes**: 
   - Arrow keys (↑↓←→)
   - WASD keys
@@ -36,9 +67,21 @@ Based on the popular game [2048](https://github.com/gabrielecirulli/2048) by Gab
 
 ## Installation
 
+### Basic Installation
 First, install the required dependencies:
 
     $ pip install -r requirements.txt
+
+### Ollama Setup (For AI Features)
+1. **Install Ollama**: Visit [ollama.ai](https://ollama.ai) and download Ollama for your platform
+2. **Start Ollama**: Run `ollama serve` in terminal
+3. **Install Models**: Download models like:
+   ```bash
+   ollama pull llama2
+   ollama pull mistral
+   ollama pull codellama
+   ```
+4. **Verify Installation**: Run `ollama list` to see installed models
 
 ## Running the Game
 
@@ -73,6 +116,16 @@ First, install the required dependencies:
     $ python start_console.py
 
 ## Controls
+
+### AI Enhanced Version
+- **Movement**: Arrow keys, WASD, or IJKL to move tiles (human mode)
+- **AI Control**: Click "Start AI" to let AI play, "Stop AI" to resume manual control
+- **Model Selection**: Choose different Ollama models to compare AI strategies
+- **Statistics**: Click "Statistics" to view comprehensive game data
+- **New Game**: Click "New Game" button to restart
+- **Undo**: Press 'B' to undo the last move (human mode only)
+- **Fullscreen**: Press 'F11' to toggle fullscreen mode
+- **Quit**: Press 'Escape' to exit the game
 
 ### GUI版本控制
 - **Movement**: Use arrow keys, WASD, or IJKL to move tiles
