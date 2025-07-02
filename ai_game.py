@@ -9,6 +9,7 @@ import random
 import time
 import json
 import copy
+import csv
 from datetime import datetime
 
 from PySide6.QtWidgets import (
@@ -16,7 +17,7 @@ from PySide6.QtWidgets import (
     QLabel, QVBoxLayout, QHBoxLayout, QFrame, QPushButton,
     QComboBox, QSpinBox, QTextEdit, QDialog,
     QDialogButtonBox, QTabWidget, QTableWidget, QTableWidgetItem,
-    QMessageBox, QGroupBox
+    QMessageBox, QGroupBox, QFileDialog
 )
 from PySide6.QtCore import Qt, QTimer, QThread, Signal
 from PySide6.QtGui import QFont, QKeyEvent
@@ -676,16 +677,23 @@ class StatisticsDialog(QDialog):
         self.setWindowTitle("Game Statistics")
         self.setMinimumSize(600, 400)
         
+        # 确保对话框颜色对比清晰
+        self.setStyleSheet("background-color: white; color: black;")
+        
         layout = QVBoxLayout(self)
         
         tabs = QTabWidget()
+        # 确保tabs有清晰的颜色对比
+        tabs.setStyleSheet("background-color: white; color: black;")
         
         # Game Stats Tab
         stats_tab = QWidget()
+        stats_tab.setStyleSheet("background-color: white; color: black;")  # 确保清晰对比
         stats_layout = QVBoxLayout(stats_tab)
         
         stats_text = QTextEdit()
         stats_text.setReadOnly(True)
+        stats_text.setStyleSheet("background-color: white; color: black; border: 1px solid #ccc;")  # 确保文字清晰可见
         stats_content = self.format_stats(stats)
         stats_text.setPlainText(stats_content)
         stats_layout.addWidget(stats_text)
@@ -694,31 +702,43 @@ class StatisticsDialog(QDialog):
         
         # Game History Tab
         history_tab = QWidget()
+        history_tab.setStyleSheet("background-color: white; color: black;")  # 确保清晰对比
         history_layout = QVBoxLayout(history_tab)
         
-        history_table = QTableWidget()
-        history_table.setColumnCount(6)
-        history_table.setHorizontalHeaderLabels([
+        # 添加导出按钮
+        export_layout = QHBoxLayout()
+        export_btn = QPushButton("📊 导出CSV")
+        export_btn.setStyleSheet("QPushButton { background-color: white; color: black; border: 1px solid #ccc; padding: 8px; border-radius: 3px; font-weight: bold; }")
+        export_btn.clicked.connect(lambda: self.export_to_csv(stats))
+        export_layout.addWidget(export_btn)
+        export_layout.addStretch()  # 将按钮推到左边
+        history_layout.addLayout(export_layout)
+        
+        self.history_table = QTableWidget()
+        self.history_table.setStyleSheet("background-color: white; color: black; border: 1px solid #ccc;")  # 确保表格清晰可见
+        self.history_table.setColumnCount(6)
+        self.history_table.setHorizontalHeaderLabels([
             "Date", "Mode", "Score", "Time (s)", "Moves", "Max Tile"
         ])
         
         games = stats.get('games', [])
-        history_table.setRowCount(len(games))
+        self.history_table.setRowCount(len(games))
         
         for i, game in enumerate(games):
-            history_table.setItem(i, 0, QTableWidgetItem(game.get('date', 'N/A')))
-            history_table.setItem(i, 1, QTableWidgetItem(game.get('mode', 'N/A')))
-            history_table.setItem(i, 2, QTableWidgetItem(str(game.get('score', 0))))
-            history_table.setItem(i, 3, QTableWidgetItem(f"{game.get('time', 0):.1f}"))
-            history_table.setItem(i, 4, QTableWidgetItem(str(game.get('moves', 0))))
-            history_table.setItem(i, 5, QTableWidgetItem(str(game.get('max_tile', 0))))
+            self.history_table.setItem(i, 0, QTableWidgetItem(game.get('date', 'N/A')))
+            self.history_table.setItem(i, 1, QTableWidgetItem(game.get('mode', 'N/A')))
+            self.history_table.setItem(i, 2, QTableWidgetItem(str(game.get('score', 0))))
+            self.history_table.setItem(i, 3, QTableWidgetItem(f"{game.get('time', 0):.1f}"))
+            self.history_table.setItem(i, 4, QTableWidgetItem(str(game.get('moves', 0))))
+            self.history_table.setItem(i, 5, QTableWidgetItem(str(game.get('max_tile', 0))))
         
-        history_layout.addWidget(history_table)
+        history_layout.addWidget(self.history_table)
         tabs.addTab(history_tab, "Game History")
         
         layout.addWidget(tabs)
         
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.setStyleSheet("QPushButton { background-color: white; color: black; border: 1px solid #ccc; padding: 5px; border-radius: 3px; }")
         buttons.rejected.connect(self.accept)
         layout.addWidget(buttons)
     
@@ -796,6 +816,61 @@ Human Best Score: {human_best_score:,}
 """
 
         return content
+    
+    def export_to_csv(self, stats):
+        """导出游戏数据到CSV文件"""
+        try:
+            # 打开文件保存对话框
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "导出游戏数据",
+                f"2048_game_stats_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                "CSV files (*.csv);;All files (*.*)"
+            )
+            
+            if not file_path:  # 用户取消了保存
+                return
+            
+            games = stats.get('games', [])
+            if not games:
+                QMessageBox.warning(self, "导出警告", "没有游戏数据可导出")
+                return
+            
+            # 写入CSV文件
+            with open(file_path, 'w', newline='', encoding='utf-8-sig') as csvfile:
+                fieldnames = ['Date', 'Mode', 'Score', 'Time_Seconds', 'Moves', 'Max_Tile']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                
+                # 写入表头
+                writer.writeheader()
+                
+                # 写入数据
+                for game in games:
+                    writer.writerow({
+                        'Date': game.get('date', 'N/A'),
+                        'Mode': game.get('mode', 'N/A'),
+                        'Score': game.get('score', 0),
+                        'Time_Seconds': round(game.get('time', 0), 1),
+                        'Moves': game.get('moves', 0),
+                        'Max_Tile': game.get('max_tile', 0)
+                    })
+            
+            # 显示成功消息
+            msg = QMessageBox(self)
+            msg.setWindowTitle("导出成功")
+            msg.setText(f"游戏数据已成功导出到:\n{file_path}\n\n共导出 {len(games)} 条游戏记录")
+            msg.setIcon(QMessageBox.Icon.Information)
+            msg.setStyleSheet("QMessageBox { background-color: white; color: black; } QMessageBox QPushButton { background-color: white; color: black; border: 1px solid #ccc; padding: 5px; }")
+            msg.exec()
+            
+        except Exception as e:
+            # 显示错误消息
+            error_msg = QMessageBox(self)
+            error_msg.setWindowTitle("导出失败")
+            error_msg.setText(f"导出CSV文件时发生错误:\n{str(e)}")
+            error_msg.setIcon(QMessageBox.Icon.Critical)
+            error_msg.setStyleSheet("QMessageBox { background-color: white; color: black; } QMessageBox QPushButton { background-color: white; color: black; border: 1px solid #ccc; padding: 5px; }")
+            error_msg.exec()
 
 # ==================== MODEL SELECTION DIALOG ====================
 class ModelSelectionDialog(QDialog):
@@ -804,11 +879,14 @@ class ModelSelectionDialog(QDialog):
         self.setWindowTitle("Select AI Model")
         self.setMinimumSize(500, 400)
         
+        # 确保对话框颜色清晰
+        self.setStyleSheet("background-color: white; color: black;")
+        
         layout = QVBoxLayout(self)
         
         # 标题和说明
         title = QLabel("🤖 AI Model Selection")
-        title.setStyleSheet("font-size: 18px; font-weight: bold; margin: 10px; color: #2c3e50;")
+        title.setStyleSheet("font-size: 18px; font-weight: bold; margin: 10px; color: black; background-color: transparent;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
         
@@ -819,7 +897,7 @@ class ModelSelectionDialog(QDialog):
             "• Ollama server must be running (ollama serve)\n"
             "• At least one model must be installed (ollama pull <model>)"
         )
-        instructions.setStyleSheet("color: #555; margin: 10px; padding: 10px; background-color: #f8f9fa; border-radius: 5px;")
+        instructions.setStyleSheet("margin: 10px; padding: 10px; border: 1px solid gray; border-radius: 5px; color: black; background-color: #f8f8f8;")  # 确保清晰对比
         instructions.setWordWrap(True)
         layout.addWidget(instructions)
         
@@ -832,34 +910,12 @@ class ModelSelectionDialog(QDialog):
         self.model_combo = QComboBox()
         self.model_combo.setMinimumHeight(30)
         self.model_combo.setToolTip("Select an AI model to play 2048.\nDifferent models may have different strategies.")
-        self.model_combo.setStyleSheet("""
-            QComboBox {
-                padding: 5px;
-                border: 2px solid #ddd;
-                border-radius: 5px;
-                background-color: white;
-            }
-            QComboBox:focus {
-                border-color: #4CAF50;
-            }
-        """)
+        self.model_combo.setStyleSheet("background-color: white; color: black; border: 1px solid #ccc; padding: 5px; border-radius: 3px;")
         model_layout.addWidget(self.model_combo)
         
         # 刷新按钮
         refresh_btn = QPushButton("🔄 Refresh Models")
-        refresh_btn.setStyleSheet("""
-            QPushButton {
-                padding: 8px;
-                background-color: #3498db;
-                color: white;
-                border: none;
-                border-radius: 5px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #2980b9;
-            }
-        """)
+        refresh_btn.setStyleSheet("background-color: white; color: black; border: 1px solid #ccc; padding: 8px; border-radius: 3px;")
         refresh_btn.clicked.connect(self.refresh_models)
         model_layout.addWidget(refresh_btn)
         
@@ -873,6 +929,7 @@ class ModelSelectionDialog(QDialog):
         delay_layout = QHBoxLayout()
         delay_label = QLabel("⏱️ Move Delay:")
         delay_label.setMinimumWidth(100)
+        delay_label.setStyleSheet("color: black; background-color: transparent;")  # 确保清晰可见
         delay_layout.addWidget(delay_label)
         
         self.delay_spin = QSpinBox()
@@ -881,18 +938,11 @@ class ModelSelectionDialog(QDialog):
         self.delay_spin.setValue(2000)
         self.delay_spin.setSuffix(" ms")
         self.delay_spin.setToolTip("Time between AI moves.\n500ms = very fast\n2000ms = comfortable to watch\n5000ms+ = slow, easy to analyze")
-        self.delay_spin.setStyleSheet("""
-            QSpinBox {
-                padding: 5px;
-                border: 2px solid #ddd;
-                border-radius: 5px;
-                background-color: white;
-            }
-        """)
+        self.delay_spin.setStyleSheet("background-color: white; color: black; border: 1px solid #ccc; padding: 5px; border-radius: 3px;")
         delay_layout.addWidget(self.delay_spin)
         
         delay_help = QLabel("(Longer delay = easier to observe AI thinking)")
-        delay_help.setStyleSheet("color: #666; font-style: italic; font-size: 11px;")
+        delay_help.setStyleSheet("font-style: italic; font-size: 11px; color: black; background-color: transparent;")  # 确保清晰可见
         
         settings_layout.addLayout(delay_layout)
         settings_layout.addWidget(delay_help)
@@ -901,7 +951,7 @@ class ModelSelectionDialog(QDialog):
         
         # 状态标签
         self.status_label = QLabel("")
-        self.status_label.setStyleSheet("color: #666; font-style: italic; margin: 5px;")
+        self.status_label.setStyleSheet("font-style: italic; margin: 5px; color: black; background-color: transparent;")  # 确保清晰可见
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.status_label)
         
@@ -911,29 +961,7 @@ class ModelSelectionDialog(QDialog):
         )
         buttons.button(QDialogButtonBox.StandardButton.Ok).setText("▶️ Start AI")
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("❌ Cancel")
-        buttons.setStyleSheet("""
-            QPushButton {
-                padding: 8px 16px;
-                border-radius: 5px;
-                font-weight: bold;
-            }
-            QPushButton[text*="Start"] {
-                background-color: #27ae60;
-                color: white;
-                border: none;
-            }
-            QPushButton[text*="Start"]:hover {
-                background-color: #229954;
-            }
-            QPushButton[text*="Cancel"] {
-                background-color: #e74c3c;
-                color: white;
-                border: none;
-            }
-            QPushButton[text*="Cancel"]:hover {
-                background-color: #c0392b;
-            }
-        """)
+        buttons.setStyleSheet("QPushButton { background-color: white; color: black; border: 1px solid #ccc; padding: 8px; border-radius: 3px; }")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -1027,28 +1055,7 @@ class ModelSelectionDialog(QDialog):
             msg_box.setWindowTitle("AI Startup Error")
             msg_box.setText(error_msg)
             msg_box.setIcon(QMessageBox.Icon.Warning)
-            msg_box.setStyleSheet("""
-                QMessageBox {
-                    background-color: white;
-                    color: black;
-                    font-size: 14px;
-                }
-                QMessageBox QLabel {
-                    color: black;
-                    background-color: transparent;
-                }
-                QMessageBox QPushButton {
-                    background-color: #f0f0f0;
-                    color: black;
-                    border: 2px solid #333;
-                    border-radius: 4px;
-                    padding: 8px 16px;
-                    font-weight: bold;
-                }
-                QMessageBox QPushButton:hover {
-                    background-color: #e0e0e0;
-                }
-            """)
+            msg_box.setStyleSheet("QMessageBox { background-color: white; color: black; } QMessageBox QPushButton { background-color: white; color: black; border: 1px solid #ccc; padding: 5px; }")
             msg_box.exec()
 
 # ==================== MAIN GAME WINDOW ====================
@@ -1091,6 +1098,9 @@ class GameGrid(QMainWindow):
         self.init_ui()
         self.update_grid_cells()
         self.start_new_game()
+        
+        # 启动时将焦点设置到游戏区域，确保键盘控制立即可用
+        QTimer.singleShot(100, lambda: self.game_container.setFocus())
     
     def init_ui(self):
         """Initialize the user interface"""
@@ -1109,7 +1119,7 @@ class GameGrid(QMainWindow):
         # Game info
         self.info_label = QLabel()
         self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.info_label.setStyleSheet("color: black; font-size: 18px; font-weight: bold; margin: 10px; background-color: transparent;")
+        self.info_label.setStyleSheet("font-size: 18px; font-weight: bold; margin: 10px; color: black; background-color: white; padding: 5px; border-radius: 3px;")
         main_layout.addWidget(self.info_label)
         
         # Game grid container
@@ -1143,6 +1153,10 @@ class GameGrid(QMainWindow):
                 grid_row.append(cell)
             self.grid_cells.append(grid_row)
         
+        # 设置游戏容器可以接收焦点和鼠标点击
+        self.game_container.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.game_container.mousePressEvent = self.on_game_area_clicked
+        
         # 创建游戏容器的居中布局
         game_layout_wrapper = QHBoxLayout()
         game_layout_wrapper.addStretch()
@@ -1150,102 +1164,70 @@ class GameGrid(QMainWindow):
         game_layout_wrapper.addStretch()
         main_layout.addLayout(game_layout_wrapper)
         
-        # Instructions
-        instructions = QLabel(
-            "🎮 人类游戏: 方向键/WASD移动 | 🤖 AI游戏: 选择模型后点击'开始AI' | ESC: 停止AI/退出 | F11: 全屏"
-        )
-        instructions.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        instructions.setStyleSheet("color: black; font-size: 14px; margin: 10px; font-weight: bold; background-color: transparent;")
-        main_layout.addWidget(instructions)
+        # 添加少量间距，避免遮挡游戏区域
+        main_layout.addSpacing(15)
         
-        # Status bar
-        self.status_label = QLabel("准备就绪 - 选择AI模型或开始手动游戏")
+        # 合并的指令和状态栏
+        self.status_label = QLabel("🎮 方向键/WASD移动 | 🤖 选择模型后点击'开始AI' | ESC: 停止AI/退出 | F11: 全屏 | 准备就绪")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_label.setStyleSheet("color: black; font-size: 16px; margin: 10px; font-weight: bold; background-color: transparent;")
+        self.status_label.setStyleSheet("font-size: 12px; margin: 5px; font-weight: bold; color: black; background-color: white; padding: 4px; border-radius: 3px;")
         main_layout.addWidget(self.status_label)
         
-        self.setStyleSheet("background-color: #faf8ef;")
+        self.setStyleSheet("background-color: #faf8ef;")  # 浅米色背景，确保对比度
     
     def create_control_panel(self):
         """Create the control panel with AI model selection and controls"""
         panel = QFrame()
         panel.setFixedHeight(200)
         panel.setStyleSheet("""
-            QFrame { 
-                background-color: #f8f8f8; 
+            QFrame {
+                background-color: #f0f0f0;
                 border: 2px solid #333;
-                border-radius: 8px; 
+                border-radius: 8px;
             }
             QLabel { 
-                color: black; 
                 font-weight: bold; 
                 font-size: 14px;
+                color: black;
                 background-color: transparent;
             }
             QPushButton { 
-                background-color: #4a90e2; 
-                color: white; 
-                border: 2px solid #333; 
-                border-radius: 6px; 
                 padding: 8px 16px; 
                 font-weight: bold; 
                 font-size: 14px;
+                color: black;
+                background-color: white;
+                border: 1px solid #ccc;
+                border-radius: 3px;
             }
-            QPushButton:hover { 
-                background-color: #357abd; 
-                border-color: #2a5490;
-            }
-            QPushButton:disabled { 
-                background-color: #ccc; 
-                color: #333; 
-                border-color: #999;
+            QPushButton:hover {
+                background-color: #e0e0e0;
             }
             QComboBox {
                 padding: 6px;
-                border: 2px solid #333;
-                border-radius: 6px;
-                background-color: white;
-                color: black;
                 font-size: 14px;
                 font-weight: bold;
-            }
-            QComboBox:focus {
-                border-color: #4a90e2;
+                color: black;
+                background-color: white;
+                border: 1px solid #ccc;
+                border-radius: 3px;
             }
             QComboBox QAbstractItemView {
-                background-color: white;
-                color: black;
                 font-weight: bold;
                 font-size: 14px;
-                border: 2px solid #333;
-                selection-background-color: #4a90e2;
-                selection-color: white;
-            }
-            QComboBox::drop-down {
-                border: none;
-                background-color: #f0f0f0;
-                width: 25px;
-                border-left: 1px solid #333;
-            }
-            QComboBox::down-arrow {
-                border: 2px solid black;
-                width: 4px;
-                height: 4px;
-                background-color: black;
+                color: black;
+                background-color: white;
             }
             QSpinBox {
                 padding: 6px;
-                border: 2px solid #333;
-                border-radius: 6px;
-                background-color: white;
-                color: black;
                 font-size: 14px;
                 font-weight: bold;
+                color: black;
+                background-color: white;
+                border: 1px solid #ccc;
+                border-radius: 3px;
             }
-            QSpinBox:focus {
-                border-color: #4a90e2;
-            }
-        """)
+        """)  # 强制设置黑字白底，确保可见性
         
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(20, 20, 20, 20)
@@ -1263,6 +1245,8 @@ class GameGrid(QMainWindow):
         self.model_combo = QComboBox()
         self.model_combo.setFixedHeight(35)
         self.model_combo.setMinimumWidth(200)
+        # 当模型选择改变时，自动将焦点返回游戏区域
+        self.model_combo.currentTextChanged.connect(lambda: QTimer.singleShot(50, lambda: self.game_container.setFocus()))
         first_row.addWidget(self.model_combo)
         
         # 刷新按钮
@@ -1292,6 +1276,8 @@ class GameGrid(QMainWindow):
             "• 动态适应: 根据局面调整策略\n"
             "• AI创新: 让AI自己设计策略"
         )
+        # 当策略选择改变时，自动将焦点返回游戏区域
+        self.strategy_combo.currentTextChanged.connect(lambda: QTimer.singleShot(50, lambda: self.game_container.setFocus()))
         first_row.addWidget(self.strategy_combo)
         
         first_row.addStretch()
@@ -1304,50 +1290,13 @@ class GameGrid(QMainWindow):
         # AI控制按钮
         self.start_ai_btn = QPushButton("🤖 开始AI")
         self.start_ai_btn.setFixedSize(120, 40)
-        self.start_ai_btn.setStyleSheet("""
-            QPushButton { 
-                background-color: #27ae60; 
-                color: white;
-                border: 2px solid #1e8449;
-                border-radius: 6px;
-                font-size: 14px;
-                font-weight: bold;
-            }
-            QPushButton:hover { 
-                background-color: #229954;
-                border-color: #186a3b;
-            }
-            QPushButton:disabled { 
-                background-color: #ccc; 
-                color: #333; 
-                border-color: #999;
-            }
-        """)
+        self.start_ai_btn.setStyleSheet("")  # 使用默认样式
         self.start_ai_btn.clicked.connect(self.start_ai_mode)
         second_row.addWidget(self.start_ai_btn)
         
         self.stop_ai_btn = QPushButton("⏹️ 停止AI")
         self.stop_ai_btn.setFixedSize(120, 40)
-        self.stop_ai_btn.setStyleSheet("""
-            QPushButton { 
-                background-color: #dc3545; 
-                color: white;
-                border: 2px solid #dc3545;
-                border-radius: 4px;
-                font-size: 14px;
-                font-weight: bold;
-            }
-            QPushButton:hover { 
-                background-color: #c82333; 
-                border-color: #c82333;
-                transform: scale(1.05);
-            }
-            QPushButton:disabled { 
-                background-color: #ccc; 
-                color: #666; 
-                border-color: #ccc;
-            }
-        """)
+        self.stop_ai_btn.setStyleSheet("")  # 使用默认样式
         self.stop_ai_btn.clicked.connect(self.stop_ai_mode)
         self.stop_ai_btn.setEnabled(False)
         second_row.addWidget(self.stop_ai_btn)
@@ -1404,7 +1353,7 @@ class GameGrid(QMainWindow):
         self.model_combo.setEnabled(False)
         self.strategy_combo.setEnabled(False)
         
-        self.status_label.setText(f"🤖 AI游戏启动 - {self.selected_model} 使用{strategy_name}")
+        self.status_label.setText(f"🤖 AI游戏中: {self.selected_model} | {strategy_name}")
         self.make_ai_move()
     
     def stop_ai_mode(self):
@@ -1420,7 +1369,7 @@ class GameGrid(QMainWindow):
         self.stop_ai_btn.setEnabled(False)
         self.model_combo.setEnabled(True)
         self.strategy_combo.setEnabled(True)
-        self.status_label.setText("AI已停止 - 人类控制")
+        self.status_label.setText("🎮 人类控制 | AI已停止")
     
     def refresh_models(self):
         """刷新可用的AI模型列表"""
@@ -1498,28 +1447,7 @@ class GameGrid(QMainWindow):
         msg_box.setWindowTitle("AI模型错误")
         msg_box.setText(error_msg)
         msg_box.setIcon(QMessageBox.Icon.Warning)
-        msg_box.setStyleSheet("""
-            QMessageBox {
-                background-color: white;
-                color: black;
-                font-size: 14px;
-            }
-            QMessageBox QLabel {
-                color: black;
-                background-color: transparent;
-            }
-            QMessageBox QPushButton {
-                background-color: #f0f0f0;
-                color: black;
-                border: 2px solid #333;
-                border-radius: 4px;
-                padding: 8px 16px;
-                font-weight: bold;
-            }
-            QMessageBox QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-        """)
+        msg_box.setStyleSheet("QMessageBox { background-color: white; color: black; } QMessageBox QPushButton { background-color: white; color: black; border: 1px solid #ccc; padding: 5px; }")
         msg_box.exec()
     
     def make_ai_move(self):
@@ -1599,28 +1527,7 @@ class GameGrid(QMainWindow):
         msg_box.setWindowTitle("AI Error")
         msg_box.setText(error_msg)
         msg_box.setIcon(QMessageBox.Icon.Warning)
-        msg_box.setStyleSheet("""
-            QMessageBox {
-                background-color: white;
-                color: black;
-                font-size: 14px;
-            }
-            QMessageBox QLabel {
-                color: black;
-                background-color: transparent;
-            }
-            QMessageBox QPushButton {
-                background-color: #f0f0f0;
-                color: black;
-                border: 2px solid #333;
-                border-radius: 4px;
-                padding: 8px 16px;
-                font-weight: bold;
-            }
-            QMessageBox QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-        """)
+        msg_box.setStyleSheet("QMessageBox { background-color: white; color: black; } QMessageBox QPushButton { background-color: white; color: black; border: 1px solid #ccc; padding: 5px; }")
         msg_box.exec()
     
     def handle_ai_thinking(self, message):
@@ -1671,7 +1578,7 @@ class GameGrid(QMainWindow):
         
         self.update_grid_cells()
         self.update_info()
-        self.status_label.setText("新游戏开始 - 选择模型开启AI或手动游戏")
+        self.status_label.setText("🎮 新游戏开始 | 方向键/WASD移动 | 可选择AI模型自动游戏")
     
     def end_game(self):
         """Handle game end"""
@@ -1766,11 +1673,21 @@ class GameGrid(QMainWindow):
         """Handle keyboard events"""
         key = event.key()
         
+        # 检查焦点是否在控制组件上（如下拉菜单、按钮等）
+        focused_widget = QApplication.focusWidget()
+        is_control_focused = (
+            focused_widget and (
+                isinstance(focused_widget, (QComboBox, QPushButton, QSpinBox)) or
+                focused_widget.parent() in [self.model_combo, self.strategy_combo]
+            )
+        )
+        
+        # 全局快捷键（无论焦点在哪里都响应）
         if key == Qt.Key.Key_Escape:
             if self.ai_mode:
                 # ESC键停止AI，不退出游戏
                 self.stop_ai_mode()
-                self.status_label.setText("AI已停止 - 可以手动游戏或重新开始AI")
+                self.status_label.setText("🎮 AI已停止 | 可手动游戏或重新开始AI")
             else:
                 # 只有在非AI模式下ESC才退出游戏
                 if self.moves_count > 0:
@@ -1779,19 +1696,38 @@ class GameGrid(QMainWindow):
         elif key == Qt.Key.Key_Space and self.ai_mode:
             # 空格键也可以停止AI
             self.stop_ai_mode()
-            self.status_label.setText("AI已停止 - 按空格键停止")
+            self.status_label.setText("🎮 AI已停止 | 空格键停止")
         elif key == Qt.Key.Key_F11:
             if self.isFullScreen():
                 self.showNormal()
             else:
                 self.showFullScreen()
-        elif key == Qt.Key.Key_B and len(self.history_matrixs) > 1 and not self.ai_mode:
-            self.matrix = self.history_matrixs.pop()
-            self.moves_count = max(0, self.moves_count - 1)
-            self.update_grid_cells()
-            self.update_info()
-        elif key in self.commands and not self.ai_mode:
-            self.execute_move(self.commands[key])
+        
+        # 游戏控制键（只有在控件没有焦点时才响应）
+        elif not is_control_focused:
+            if key == Qt.Key.Key_B and len(self.history_matrixs) > 1 and not self.ai_mode:
+                self.matrix = self.history_matrixs.pop()
+                self.moves_count = max(0, self.moves_count - 1)
+                self.update_grid_cells()
+                self.update_info()
+            elif key in self.commands and not self.ai_mode:
+                self.execute_move(self.commands[key])
+        
+        # 如果焦点在控件上且是方向键，让控件处理（不调用游戏移动）
+        elif is_control_focused and key in self.commands:
+            # 让控件自己处理方向键（如下拉菜单导航）
+            event.ignore()
+            return
+        
+        # 对于其他情况，调用父类的事件处理
+        super().keyPressEvent(event)
+    
+    def on_game_area_clicked(self, event):
+        """游戏区域被点击时，设置焦点到游戏区域以确保键盘控制正常工作"""
+        self.game_container.setFocus()
+        # 显示提示信息
+        if not self.ai_mode:
+            self.status_label.setText("🎮 游戏区域已聚焦 | 键盘控制已激活")
     
     def show_game_result(self, text1, text2):
         """Display game result"""
@@ -1799,11 +1735,11 @@ class GameGrid(QMainWindow):
             if self.ai_mode:
                 display_text1 = f"AI"
                 display_text2 = text2
-                result_text = f"🤖 AI游戏结束: {text2} | 模型: {self.selected_model}"
+                result_text = f"🤖 AI{text2} | 模型: {self.selected_model}"
             else:
                 display_text1 = text1
                 display_text2 = text2
-                result_text = f"🎮 游戏结束: {text2}"
+                result_text = f"🎮 {text2} | 游戏结束"
             
             self.grid_cells[1][1].setText(display_text1)
             self.grid_cells[1][1].setStyleSheet(f"""
@@ -1851,28 +1787,7 @@ def main():
                        "To enable AI features, install Ollama:\n"
                        "pip install ollama")
         msg_box.setIcon(QMessageBox.Icon.Warning)
-        msg_box.setStyleSheet("""
-            QMessageBox {
-                background-color: white;
-                color: black;
-                font-size: 14px;
-            }
-            QMessageBox QLabel {
-                color: black;
-                background-color: transparent;
-            }
-            QMessageBox QPushButton {
-                background-color: #f0f0f0;
-                color: black;
-                border: 2px solid #333;
-                border-radius: 4px;
-                padding: 8px 16px;
-                font-weight: bold;
-            }
-            QMessageBox QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-        """)
+        msg_box.setStyleSheet("QMessageBox { background-color: white; color: black; } QMessageBox QPushButton { background-color: white; color: black; border: 1px solid #ccc; padding: 5px; }")
         msg_box.exec()
     
     game = GameGrid()
