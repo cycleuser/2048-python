@@ -175,12 +175,13 @@ class AIWorker(QThread):
     # 简单的AI决策缓存
     _move_cache = {}
     
-    def __init__(self, matrix, model_name, move_delay=2000):
+    def __init__(self, matrix, model_name, move_delay=2000, strategy_mode='snake'):
         super().__init__()
         self.matrix = matrix
         self.model_name = model_name
         self.move_delay = move_delay
         self.running = True
+        self.strategy_mode = strategy_mode  # 添加策略模式
         
     def run(self):
         if not ollama:
@@ -196,15 +197,18 @@ class AIWorker(QThread):
                 self.error_signal.emit("No valid moves available - game over")
                 return
             
-            # 创建包含有效移动的缓存键
+            # 获取选择的策略模式
+            strategy_mode = getattr(self, 'strategy_mode', 'snake')  # 默认蛇形策略
+            
+            # 创建包含有效移动和策略的缓存键
             board_state = tuple(tuple(row) for row in self.matrix)
             valid_moves_key = tuple(sorted(valid_moves))
-            cache_key = (board_state, valid_moves_key)
+            cache_key = (board_state, valid_moves_key, strategy_mode)
             
             # 检查缓存
             if cache_key in AIWorker._move_cache:
                 ai_move = AIWorker._move_cache[cache_key]
-                print(f"Using cached move: {ai_move} (from valid: {valid_moves})")
+                print(f"Using cached move: {ai_move} (strategy: {strategy_mode}, valid: {valid_moves})")
             else:
                 # 没有缓存，需要调用AI模型
                 board_str = matrix_to_string(self.matrix)
@@ -248,41 +252,360 @@ class AIWorker(QThread):
                         elif 'DOWN' in valid_moves:
                             move_advice = "DOWN maintains corner build."
                 
-                prompt = f"""Playing 2048 - merge tiles to reach 2048!
+                # 策略模式已在前面获取
+                
+                # 多策略系统 - 不同的2048游戏策略
+                strategies = {
+                    'snake': {
+                        'name': 'Snake Pattern (Classic Optimal)',
+                        'description': 'Maintain monotonic rows in snake pattern',
+                        'strategy': """
+OPTIMAL 2048 STRATEGY - SNAKE PATTERN:
+===========================================
 
-Current board:
+CORE PRINCIPLE: "SNAKE" or "MONOTONIC" FILLING
+1. **CORNER DOMINANCE**: Always keep the largest tile in one corner (bottom-right preferred)
+2. **SNAKE PATTERN**: Fill the board in a snake-like pattern to maintain order
+   
+   IDEAL BOARD LAYOUT (example with bottom-right corner):
+   [  32][  64][ 128][ 256]  ← Row 2: Right-to-left decreasing (snake up)
+   [ 512][1024][2048][   4]  ← Row 1: Left-to-right increasing (largest in corner)
+   
+   Or vertically:
+   [2048][ 512][  32][   4]  ← Column 1: Top-to-bottom decreasing
+   [1024][ 256][  64][   8]  ← Column 2: Bottom-to-top decreasing (snake right)
+
+3. **MOVE PRIORITY**: RIGHT > DOWN > LEFT > UP
+4. **FORBIDDEN**: Never break corner dominance or monotonic sequences
+"""
+                    },
+                    
+                    'corner_focus': {
+                        'name': 'Corner Focus Strategy',
+                        'description': 'Build maximum value in chosen corner with flexible patterns',
+                        'strategy': """
+CORNER FOCUS STRATEGY:
+=====================
+
+CORE PRINCIPLE: "FLEXIBLE CORNER BUILDING"
+1. **CORNER SELECTION**: Choose and stick to one corner (any of 4 corners)
+2. **VALUE CONCENTRATION**: Keep 3-4 highest values near chosen corner
+3. **ADAPTIVE PATTERN**: Allow flexible patterns as long as corner is protected
+4. **MERGE PRIORITY**: Always merge toward the corner
+5. **MOVE PRIORITY**: Prioritize moves that build toward corner
+6. **ESCAPE ROUTES**: Maintain paths for smaller tiles to escape
+"""
+                    },
+                    
+                    'edge_priority': {
+                        'name': 'Edge Priority Strategy', 
+                        'description': 'Build along edges before filling center',
+                        'strategy': """
+EDGE PRIORITY STRATEGY:
+======================
+
+CORE PRINCIPLE: "EDGE-TO-CENTER BUILDING"
+1. **EDGE DOMINANCE**: Build strongest tiles along edges first
+2. **PERIMETER CONTROL**: Control board perimeter before center
+3. **GRADUAL INWARD**: Move from edges toward center gradually
+4. **MULTIPLE FRONTS**: Can work on multiple edges simultaneously
+5. **CENTER LAST**: Only fill center when edges are strong
+6. **FLEXIBILITY**: More flexible than snake pattern, allows adaptation
+"""
+                    },
+                    
+                    'dynamic_adaptive': {
+                        'name': 'Dynamic Adaptive Strategy',
+                        'description': 'Adapt strategy based on current board state',
+                        'strategy': """
+DYNAMIC ADAPTIVE STRATEGY:
+=========================
+
+CORE PRINCIPLE: "SITUATIONAL ADAPTATION"
+1. **STATE ANALYSIS**: Analyze current board configuration
+2. **STRATEGY SWITCHING**: Change approach based on board state
+3. **OPPORTUNITY BASED**: Prioritize immediate merge opportunities
+4. **THREAT RESPONSE**: React to dangerous situations dynamically  
+5. **PATTERN RECOGNITION**: Identify beneficial patterns and build on them
+6. **FLEXIBLE GOALS**: Adjust goals based on achievable outcomes
+"""
+                    },
+                    
+                    'ai_innovation': {
+                        'name': 'AI Innovation Mode',
+                        'description': 'Let AI analyze and create its own optimal strategy',
+                        'strategy': """
+AI INNOVATION MODE:
+==================
+
+MISSION: You are a 2048 strategy researcher and innovator.
+
+YOUR TASK:
+1. **ANALYZE** the current board state deeply
+2. **IDENTIFY** patterns, opportunities, and threats
+3. **INNOVATE** your own strategy based on this specific situation
+4. **EXPLAIN** your reasoning (internally) 
+5. **EXECUTE** your chosen move
+
+INNOVATION GUIDELINES:
+- Don't just follow existing strategies blindly
+- Look for unique patterns in this specific board
+- Consider unconventional approaches if they make sense
+- Balance risk vs reward based on current state
+- Create your own rules for this particular game state
+
+THINK CREATIVELY: What would be the absolute best move for THIS specific situation?
+"""
+                    }
+                }
+                
+                # 选择当前策略
+                current_strategy = strategies.get(strategy_mode, strategies['snake'])
+                detailed_strategy = current_strategy['strategy']
+
+                # 分析当前局面并给出具体建议
+                max_tile = max(max(row) for row in self.matrix)
+                max_pos = None
+                for i in range(len(self.matrix)):
+                    for j in range(len(self.matrix[0])):
+                        if self.matrix[i][j] == max_tile:
+                            max_pos = (i, j)
+                            break
+                    if max_pos:
+                        break
+
+                # 检查当前棋盘的单调性
+                def check_monotonicity():
+                    """检查棋盘的单调性和蛇形结构"""
+                    bottom_row = self.matrix[3]  # 最底行
+                    second_row = self.matrix[2]  # 倒数第二行
+                    
+                    # 检查底行是否从左到右递增（忽略0）
+                    bottom_increasing = True
+                    bottom_non_zero = [x for x in bottom_row if x > 0]
+                    if len(bottom_non_zero) > 1:
+                        for i in range(len(bottom_non_zero) - 1):
+                            if bottom_non_zero[i] > bottom_non_zero[i + 1]:
+                                bottom_increasing = False
+                                break
+                    
+                    # 检查第二行是否从右到左递增（蛇形）
+                    snake_correct = True
+                    second_non_zero = [x for x in reversed(second_row) if x > 0]
+                    if len(second_non_zero) > 1:
+                        for i in range(len(second_non_zero) - 1):
+                            if second_non_zero[i] > second_non_zero[i + 1]:
+                                snake_correct = False
+                                break
+                    
+                    return bottom_increasing, snake_correct
+
+                bottom_mono, snake_mono = check_monotonicity()
+
+                # 基于当前局面的具体分析
+                situation_analysis = ""
+                recommended_move = ""
+                
+                if max_pos:
+                    row, col = max_pos
+                    if max_tile >= 512:
+                        if row == 3 and col == 3:  # 在右下角
+                            situation_analysis = f"EXCELLENT: {max_tile} secured in bottom-right corner. "
+                            if bottom_mono and snake_mono:
+                                situation_analysis += "Snake pattern maintained! "
+                                if 'RIGHT' in valid_moves and 'DOWN' in valid_moves:
+                                    recommended_move = "RIGHT or DOWN (perfect snake structure)"
+                                elif 'RIGHT' in valid_moves:
+                                    recommended_move = "RIGHT (maintain bottom row)"
+                                elif 'DOWN' in valid_moves:
+                                    recommended_move = "DOWN (build column)"
+                            else:
+                                situation_analysis += "Need to restore snake pattern. "
+                                if 'RIGHT' in valid_moves:
+                                    recommended_move = "RIGHT (restore bottom monotonicity)"
+                                elif 'DOWN' in valid_moves:
+                                    recommended_move = "DOWN (safe move)"
+                        else:
+                            situation_analysis = f"CRITICAL: {max_tile} NOT in corner at [{row},{col}]! Must relocate! "
+                            # 推荐能将大数字向右下角移动的方向
+                            if row < 3 and col < 3:
+                                recommended_move = "RIGHT then DOWN (move to corner)"
+                            elif row < 3 and 'DOWN' in valid_moves:
+                                recommended_move = "DOWN (move to bottom row)"
+                            elif col < 3 and 'RIGHT' in valid_moves:
+                                recommended_move = "RIGHT (move to right column)"
+                    elif max_tile >= 128:
+                        situation_analysis = f"BUILDING: {max_tile} growing, establish snake pattern. "
+                        if not bottom_mono:
+                            recommended_move = "RIGHT (fix bottom row monotonicity)"
+                        elif 'RIGHT' in valid_moves and 'DOWN' in valid_moves:
+                            recommended_move = "RIGHT or DOWN (build toward corner)"
+                        elif 'RIGHT' in valid_moves:
+                            recommended_move = "RIGHT (strengthen bottom row)"
+                        elif 'DOWN' in valid_moves:
+                            recommended_move = "DOWN (build column)"
+                    else:
+                        situation_analysis = f"EARLY GAME: Focus on corner establishment. "
+                        if 'RIGHT' in valid_moves and 'DOWN' in valid_moves:
+                            recommended_move = "RIGHT or DOWN (start corner strategy)"
+                        elif 'RIGHT' in valid_moves:
+                            recommended_move = "RIGHT"
+                        elif 'DOWN' in valid_moves:
+                            recommended_move = "DOWN"
+
+                # 检查当前棋盘的合并机会和蛇形结构
+                merge_opportunities = ""
+                structure_analysis = ""
+                
+                # 分析底行结构
+                bottom_row = self.matrix[3]
+                bottom_non_zero = [(i, val) for i, val in enumerate(bottom_row) if val > 0]
+                if len(bottom_non_zero) >= 2:
+                    is_increasing = all(bottom_non_zero[i][1] <= bottom_non_zero[i+1][1] 
+                                      for i in range(len(bottom_non_zero)-1))
+                    if is_increasing:
+                        structure_analysis += "✓ Bottom row monotonic (good snake foundation). "
+                    else:
+                        structure_analysis += "✗ Bottom row needs reordering for snake pattern. "
+
+                # 检查合并机会
+                for i in range(len(self.matrix)):
+                    for j in range(len(self.matrix[0]) - 1):
+                        if self.matrix[i][j] == self.matrix[i][j+1] and self.matrix[i][j] > 0:
+                            merge_opportunities += f"→Merge {self.matrix[i][j]} horizontally at row {i}. "
+                
+                for i in range(len(self.matrix) - 1):
+                    for j in range(len(self.matrix[0])):
+                        if self.matrix[i][j] == self.matrix[i+1][j] and self.matrix[i][j] > 0:
+                            merge_opportunities += f"↓Merge {self.matrix[i][j]} vertically at col {j}. "
+
+                # 特殊策略建议
+                strategic_advice = ""
+                if max_tile >= 1024:
+                    strategic_advice = "HIGH-VALUE GAME: Extreme caution! Only RIGHT/DOWN moves!"
+                elif max_tile >= 256:
+                    strategic_advice = "MID-GAME: Maintain snake pattern, avoid UP moves."
+                else:
+                    strategic_advice = "EARLY-GAME: Establish corner dominance with RIGHT/DOWN preference."
+
+                # 根据策略模式调整提示词
+                if strategy_mode == 'ai_innovation':
+                    # AI创新模式 - 让AI自己分析和创造策略
+                    prompt = f"""You are a 2048 STRATEGY INNOVATOR and RESEARCHER.
+
+{detailed_strategy}
+
+CURRENT GAME SITUATION:
+======================
+Board State:
 {board_str}
 
-Max tile: {max_tile}
-{strategy_advice}{move_advice}
+📊 ANALYSIS DATA:
+- Max tile: {max_tile} at position {max_pos}
+- Valid moves: {valid_moves_str}
+- Merge opportunities: {merge_opportunities}
+- Board structure: {structure_analysis}
 
-Valid moves: {valid_moves_str}
+YOUR INNOVATION CHALLENGE:
+=========================
+1. **DEEP ANALYSIS**: What makes this board state unique?
+2. **PATTERN RECOGNITION**: What patterns do you see?
+3. **STRATEGY CREATION**: What's YOUR optimal approach for THIS specific situation?
+4. **REASONING**: Why is your chosen move the best?
+5. **INNOVATION**: Can you do better than traditional strategies?
 
-Choose smartly - answer with ONE word only: {' or '.join(valid_moves)}
+Don't just follow rules - THINK CREATIVELY and INNOVATE!
+Create your own strategy for this exact board state.
 
-Best move:"""
+AVAILABLE MOVES: {valid_moves_str}
+CHOOSE ONE WORD: {' | '.join(valid_moves)}"""
+                
+                else:
+                    # 传统策略模式
+                    strategy_name = current_strategy['name']
+                    prompt = f"""You are a 2048 EXPERT using {strategy_name}.
+
+{detailed_strategy}
+
+CURRENT BOARD ANALYSIS:
+======================
+Board State:
+{board_str}
+
+🎯 ANALYSIS: {situation_analysis}
+🔍 STRUCTURE: {structure_analysis}
+⚡ MERGES: {merge_opportunities}
+📍 Max tile: {max_tile} at position {max_pos}
+🎮 STRATEGY: {strategic_advice}
+
+VALID MOVES ONLY: {valid_moves_str}
+🎯 RECOMMENDED: {recommended_move}
+
+STRATEGY CHECKLIST:
+===================
+- Current strategy: {strategy_name}
+- Max tile position: {max_pos}
+- Board structure assessment: {structure_analysis}
+- Immediate opportunities: {merge_opportunities}
+
+RESPOND WITH EXACTLY ONE WORD: {' | '.join(valid_moves)}"""
 
                 response = ollama.chat(
                     model=self.model_name,
-                    messages=[{'role': 'user', 'content': prompt}],
+                    messages=[
+                        {
+                            'role': 'system', 
+                            'content': 'You are an expert 2048 player. Always respond with only one word: UP, DOWN, LEFT, or RIGHT. Never use thinking tags or explanations.'
+                        },
+                        {
+                            'role': 'user', 
+                            'content': prompt
+                        }
+                    ],
                     options={
-                        'num_predict': 1,  # 只生成1个token
+                        'num_predict': 3,  # 允许稍多token以获得完整单词
                         'temperature': 0.0,  # 完全确定性
                         'top_p': 1.0,
-                        'top_k': 4,  # 限制选择范围
-                        'stop': ['\n', ' ', '.', ':'],  # 更严格的停止条件
-                        'repeat_penalty': 1.0  # 避免重复
+                        'top_k': 4,  # 限制选择到4个有效移动
+                        'stop': ['\n', '.', ':', '(', '<', 'because', 'since'],  # 停止解释性文本
+                        'repeat_penalty': 1.1  # 轻微避免重复
                     }
                 )
                 
                 ai_response = response['message']['content'].strip()
+                print(f"AI原始响应: '{ai_response}'")
+                
+                # 更全面的文本清理
                 ai_move = ai_response.upper()
                 
-                # 清理AI输出，移除常见的无关内容
-                ai_move = ai_move.replace('<THINK>', '').replace('</THINK>', '')
-                ai_move = ai_move.replace('THINK:', '').replace('THINKING:', '')
-                ai_move = ai_move.replace('MOVE:', '').replace('ANSWER:', '')
-                ai_move = ai_move.strip()
+                # 移除所有可能的思考标签和解释性文本
+                cleanup_patterns = [
+                    '<THINK>', '</THINK>', '<think>', '</think>',
+                    'THINK:', 'THINKING:', 'THOUGHT:', 'ANALYSIS:',
+                    'MOVE:', 'ANSWER:', 'RESPONSE:', 'CHOICE:',
+                    'BECAUSE', 'SINCE', 'AS', 'THE', 'BEST', 'RECOMMENDED',
+                    '(', ')', '[', ']', '{', '}', '"', "'",
+                    'IS', 'TO', 'MOVE', 'DIRECTION', 'STRATEGY'
+                ]
+                
+                for pattern in cleanup_patterns:
+                    ai_move = ai_move.replace(pattern, '')
+                
+                # 移除数字和多余的空格
+                ai_move = ''.join(char for char in ai_move if char.isalpha() or char.isspace())
+                ai_move = ' '.join(ai_move.split())  # 标准化空格
+                
+                # 提取第一个有效的移动词
+                words = ai_move.split()
+                valid_words = ['UP', 'DOWN', 'LEFT', 'RIGHT']
+                ai_move = ''
+                
+                for word in words:
+                    if word in valid_words:
+                        ai_move = word
+                        break
+                
+                print(f"清理后的AI移动: '{ai_move}'")
                 
                 # 验证AI选择的移动是否有效
                 if ai_move not in valid_moves:
@@ -332,7 +655,7 @@ Best move:"""
                 # 缓存决策 (限制缓存大小避免内存爆炸)
                 if len(AIWorker._move_cache) < 1000:
                     AIWorker._move_cache[cache_key] = ai_move
-                    print(f"New AI move cached: {ai_move} from valid {valid_moves} (cache size: {len(AIWorker._move_cache)})")
+                    print(f"New AI move cached: {ai_move} (strategy: {strategy_mode}, valid: {valid_moves}) - cache size: {len(AIWorker._move_cache)}")
             
             # 移除延迟，让响应更快
             # self.msleep(100)  # 已移除，提高响应速度
@@ -688,19 +1011,45 @@ class ModelSelectionDialog(QDialog):
                     error_msg += "Ollama connection error.\n\n"
                     error_msg += "Check if Ollama is running properly."
             elif current_text.startswith("📦"):
-                error_msg += "No AI models are installed.\n\n"
+                error_msg += "⚠️ No AI models are installed.\n\n"
                 error_msg += "📦 To install models:\n"
                 error_msg += "• ollama pull llama2 (General purpose)\n"
                 error_msg += "• ollama pull mistral (Faster)\n"
                 error_msg += "• ollama pull codellama (Logic-focused)"
             else:
-                error_msg += "Please select a valid AI model.\n\n"
+                error_msg += "⚠️ Please select a valid AI model.\n\n"
                 error_msg += "💡 Troubleshooting:\n"
                 error_msg += "1. Start Ollama: ollama serve\n"
                 error_msg += "2. Install a model: ollama pull llama2\n"
                 error_msg += "3. Click 'Refresh Models'"
             
-            QMessageBox.warning(self, "AI Startup Error", error_msg)
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("AI Startup Error")
+            msg_box.setText(error_msg)
+            msg_box.setIcon(QMessageBox.Icon.Warning)
+            msg_box.setStyleSheet("""
+                QMessageBox {
+                    background-color: white;
+                    color: black;
+                    font-size: 14px;
+                }
+                QMessageBox QLabel {
+                    color: black;
+                    background-color: transparent;
+                }
+                QMessageBox QPushButton {
+                    background-color: #f0f0f0;
+                    color: black;
+                    border: 2px solid #333;
+                    border-radius: 4px;
+                    padding: 8px 16px;
+                    font-weight: bold;
+                }
+                QMessageBox QPushButton:hover {
+                    background-color: #e0e0e0;
+                }
+            """)
+            msg_box.exec()
 
 # ==================== MAIN GAME WINDOW ====================
 class GameGrid(QMainWindow):
@@ -760,7 +1109,7 @@ class GameGrid(QMainWindow):
         # Game info
         self.info_label = QLabel()
         self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.info_label.setStyleSheet("color: black; font-size: 18px; font-weight: bold; margin: 10px;")
+        self.info_label.setStyleSheet("color: black; font-size: 18px; font-weight: bold; margin: 10px; background-color: transparent;")
         main_layout.addWidget(self.info_label)
         
         # Game grid container
@@ -806,13 +1155,13 @@ class GameGrid(QMainWindow):
             "🎮 人类游戏: 方向键/WASD移动 | 🤖 AI游戏: 选择模型后点击'开始AI' | ESC: 停止AI/退出 | F11: 全屏"
         )
         instructions.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        instructions.setStyleSheet("color: black; font-size: 14px; margin: 10px; font-weight: bold;")
+        instructions.setStyleSheet("color: black; font-size: 14px; margin: 10px; font-weight: bold; background-color: transparent;")
         main_layout.addWidget(instructions)
         
         # Status bar
         self.status_label = QLabel("准备就绪 - 选择AI模型或开始手动游戏")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_label.setStyleSheet("color: black; font-size: 16px; margin: 10px; font-weight: bold;")
+        self.status_label.setStyleSheet("color: black; font-size: 16px; margin: 10px; font-weight: bold; background-color: transparent;")
         main_layout.addWidget(self.status_label)
         
         self.setStyleSheet("background-color: #faf8ef;")
@@ -823,62 +1172,78 @@ class GameGrid(QMainWindow):
         panel.setFixedHeight(200)
         panel.setStyleSheet("""
             QFrame { 
-                background-color: #f5f5f5; 
-                border: 1px solid #ccc;
-                border-radius: 5px; 
+                background-color: #f8f8f8; 
+                border: 2px solid #333;
+                border-radius: 8px; 
             }
             QLabel { 
                 color: black; 
                 font-weight: bold; 
                 font-size: 14px;
+                background-color: transparent;
             }
             QPushButton { 
                 background-color: #4a90e2; 
                 color: white; 
-                border: none; 
-                border-radius: 4px; 
+                border: 2px solid #333; 
+                border-radius: 6px; 
                 padding: 8px 16px; 
                 font-weight: bold; 
                 font-size: 14px;
             }
-            QPushButton:hover { background-color: #357abd; }
-            QPushButton:disabled { background-color: #ccc; color: #666; }
+            QPushButton:hover { 
+                background-color: #357abd; 
+                border-color: #2a5490;
+            }
+            QPushButton:disabled { 
+                background-color: #ccc; 
+                color: #333; 
+                border-color: #999;
+            }
             QComboBox {
-                padding: 5px;
-                border: 1px solid #ccc;
-                border-radius: 4px;
+                padding: 6px;
+                border: 2px solid #333;
+                border-radius: 6px;
                 background-color: white;
                 color: black;
                 font-size: 14px;
                 font-weight: bold;
+            }
+            QComboBox:focus {
+                border-color: #4a90e2;
             }
             QComboBox QAbstractItemView {
                 background-color: white;
                 color: black;
                 font-weight: bold;
                 font-size: 14px;
-                border: 1px solid #ccc;
+                border: 2px solid #333;
                 selection-background-color: #4a90e2;
                 selection-color: white;
             }
             QComboBox::drop-down {
                 border: none;
                 background-color: #f0f0f0;
-                width: 20px;
+                width: 25px;
+                border-left: 1px solid #333;
             }
             QComboBox::down-arrow {
                 border: 2px solid black;
-                width: 3px;
-                height: 3px;
+                width: 4px;
+                height: 4px;
                 background-color: black;
             }
             QSpinBox {
-                padding: 5px;
-                border: 1px solid #ccc;
-                border-radius: 4px;
+                padding: 6px;
+                border: 2px solid #333;
+                border-radius: 6px;
                 background-color: white;
                 color: black;
                 font-size: 14px;
+                font-weight: bold;
+            }
+            QSpinBox:focus {
+                border-color: #4a90e2;
             }
         """)
         
@@ -897,7 +1262,7 @@ class GameGrid(QMainWindow):
         
         self.model_combo = QComboBox()
         self.model_combo.setFixedHeight(35)
-        self.model_combo.setMinimumWidth(300)
+        self.model_combo.setMinimumWidth(200)
         first_row.addWidget(self.model_combo)
         
         # 刷新按钮
@@ -906,7 +1271,28 @@ class GameGrid(QMainWindow):
         refresh_btn.clicked.connect(self.refresh_models)
         first_row.addWidget(refresh_btn)
         
-
+        # 策略选择
+        strategy_label = QLabel("策略:")
+        strategy_label.setFixedWidth(50)
+        first_row.addWidget(strategy_label)
+        
+        self.strategy_combo = QComboBox()
+        self.strategy_combo.setFixedHeight(35)
+        self.strategy_combo.setMinimumWidth(180)
+        self.strategy_combo.addItem("🐍 蛇形策略 (经典最优)", "snake")
+        self.strategy_combo.addItem("🎯 角落专注策略", "corner_focus") 
+        self.strategy_combo.addItem("📐 边缘优先策略", "edge_priority")
+        self.strategy_combo.addItem("🔄 动态适应策略", "dynamic_adaptive")
+        self.strategy_combo.addItem("🧠 AI创新模式", "ai_innovation")
+        self.strategy_combo.setToolTip(
+            "选择AI使用的策略模式:\n"
+            "• 蛇形策略: 经典最优，单调性排列\n"
+            "• 角落专注: 灵活的角落建设\n" 
+            "• 边缘优先: 从边缘向中心建设\n"
+            "• 动态适应: 根据局面调整策略\n"
+            "• AI创新: 让AI自己设计策略"
+        )
+        first_row.addWidget(self.strategy_combo)
         
         first_row.addStretch()
         layout.addLayout(first_row)
@@ -922,13 +1308,20 @@ class GameGrid(QMainWindow):
             QPushButton { 
                 background-color: #27ae60; 
                 color: white;
-                border: none;
-                border-radius: 4px;
+                border: 2px solid #1e8449;
+                border-radius: 6px;
                 font-size: 14px;
                 font-weight: bold;
             }
-            QPushButton:hover { background-color: #229954; }
-            QPushButton:disabled { background-color: #ccc; color: #666; }
+            QPushButton:hover { 
+                background-color: #229954;
+                border-color: #186a3b;
+            }
+            QPushButton:disabled { 
+                background-color: #ccc; 
+                color: #333; 
+                border-color: #999;
+            }
         """)
         self.start_ai_btn.clicked.connect(self.start_ai_mode)
         second_row.addWidget(self.start_ai_btn)
@@ -995,17 +1388,23 @@ class GameGrid(QMainWindow):
             self.show_model_error(current_text)
             return
         
+        # 获取选择的策略
+        strategy_data = self.strategy_combo.currentData()
+        strategy_name = self.strategy_combo.currentText().split(' ')[1] if ' ' in self.strategy_combo.currentText() else "策略"
+        
         # 开始AI模式
         self.selected_model = current_data
+        self.selected_strategy = strategy_data
         self.move_delay = 150  # 减少到150ms，让AI游戏非常快速
         
         self.ai_mode = True
-        self.game_mode = f"AI ({self.selected_model})"
+        self.game_mode = f"AI ({self.selected_model} - {strategy_name})"
         self.start_ai_btn.setEnabled(False)
         self.stop_ai_btn.setEnabled(True)
         self.model_combo.setEnabled(False)
+        self.strategy_combo.setEnabled(False)
         
-        self.status_label.setText(f"🤖 AI游戏启动 - {self.selected_model}")
+        self.status_label.setText(f"🤖 AI游戏启动 - {self.selected_model} 使用{strategy_name}")
         self.make_ai_move()
     
     def stop_ai_mode(self):
@@ -1020,6 +1419,7 @@ class GameGrid(QMainWindow):
         self.start_ai_btn.setEnabled(True)
         self.stop_ai_btn.setEnabled(False)
         self.model_combo.setEnabled(True)
+        self.strategy_combo.setEnabled(True)
         self.status_label.setText("AI已停止 - 人类控制")
     
     def refresh_models(self):
@@ -1077,7 +1477,7 @@ class GameGrid(QMainWindow):
                 self.model_combo.addItem("📦 未找到模型", None)
                 
         except Exception as e:
-            self.model_combo.addItem(f"❌ 连接错误: {str(e)}", None)
+            self.model_combo.addItem(f"❌ Connection error: {str(e)}", None)
             print(f"Error loading models: {e}")
     
     def show_model_error(self, current_text):
@@ -1094,7 +1494,33 @@ class GameGrid(QMainWindow):
         else:
             error_msg = "⚠️ 请选择一个有效的AI模型\n\n如果列表为空:\n1. 启动Ollama: ollama serve\n2. 安装模型: ollama pull llama2\n3. 点击🔄刷新"
         
-        QMessageBox.warning(self, "AI模型错误", error_msg)
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("AI模型错误")
+        msg_box.setText(error_msg)
+        msg_box.setIcon(QMessageBox.Icon.Warning)
+        msg_box.setStyleSheet("""
+            QMessageBox {
+                background-color: white;
+                color: black;
+                font-size: 14px;
+            }
+            QMessageBox QLabel {
+                color: black;
+                background-color: transparent;
+            }
+            QMessageBox QPushButton {
+                background-color: #f0f0f0;
+                color: black;
+                border: 2px solid #333;
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-weight: bold;
+            }
+            QMessageBox QPushButton:hover {
+                background-color: #e0e0e0;
+            }
+        """)
+        msg_box.exec()
     
     def make_ai_move(self):
         """Make an AI move"""
@@ -1107,8 +1533,14 @@ class GameGrid(QMainWindow):
             self.stop_ai_mode()
             return
         
-        # Create AI worker
-        self.ai_worker = AIWorker(copy.deepcopy(self.matrix), self.selected_model, self.move_delay)
+        # Create AI worker with strategy
+        strategy_mode = getattr(self, 'selected_strategy', 'snake')
+        self.ai_worker = AIWorker(
+            copy.deepcopy(self.matrix), 
+            self.selected_model, 
+            self.move_delay,
+            strategy_mode
+        )
         self.ai_worker.move_signal.connect(self.handle_ai_move)
         self.ai_worker.error_signal.connect(self.handle_ai_error)
         # 移除thinking信号连接以提高性能
@@ -1163,7 +1595,33 @@ class GameGrid(QMainWindow):
         """Handle AI error"""
         self.status_label.setText(error_msg)
         self.stop_ai_mode()
-        QMessageBox.warning(self, "AI Error", error_msg)
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("AI Error")
+        msg_box.setText(error_msg)
+        msg_box.setIcon(QMessageBox.Icon.Warning)
+        msg_box.setStyleSheet("""
+            QMessageBox {
+                background-color: white;
+                color: black;
+                font-size: 14px;
+            }
+            QMessageBox QLabel {
+                color: black;
+                background-color: transparent;
+            }
+            QMessageBox QPushButton {
+                background-color: #f0f0f0;
+                color: black;
+                border: 2px solid #333;
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-weight: bold;
+            }
+            QMessageBox QPushButton:hover {
+                background-color: #e0e0e0;
+            }
+        """)
+        msg_box.exec()
     
     def handle_ai_thinking(self, message):
         """Handle AI thinking status"""
@@ -1209,6 +1667,7 @@ class GameGrid(QMainWindow):
         self.start_ai_btn.setEnabled(True)
         self.stop_ai_btn.setEnabled(False)
         self.model_combo.setEnabled(True)
+        self.strategy_combo.setEnabled(True)
         
         self.update_grid_cells()
         self.update_info()
@@ -1386,13 +1845,35 @@ def main():
     
     # Check if Ollama is available
     if not ollama:
-        QMessageBox.warning(
-            None, 
-            "Ollama Not Found",
-            "Ollama is not installed. AI features will be disabled.\n"
-            "To enable AI features, install Ollama:\n"
-            "pip install ollama"
-        )
+        msg_box = QMessageBox()
+        msg_box.setWindowTitle("Ollama Not Found")
+        msg_box.setText("Ollama is not installed. AI features will be disabled.\n"
+                       "To enable AI features, install Ollama:\n"
+                       "pip install ollama")
+        msg_box.setIcon(QMessageBox.Icon.Warning)
+        msg_box.setStyleSheet("""
+            QMessageBox {
+                background-color: white;
+                color: black;
+                font-size: 14px;
+            }
+            QMessageBox QLabel {
+                color: black;
+                background-color: transparent;
+            }
+            QMessageBox QPushButton {
+                background-color: #f0f0f0;
+                color: black;
+                border: 2px solid #333;
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-weight: bold;
+            }
+            QMessageBox QPushButton:hover {
+                background-color: #e0e0e0;
+            }
+        """)
+        msg_box.exec()
     
     game = GameGrid()
     game.show()
