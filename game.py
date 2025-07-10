@@ -364,7 +364,8 @@ class GameGrid(QMainWindow):
                 
                 game_state_result = game_state(self.matrix)
                 if game_state_result == 'win':
-                    self.show_game_result("You", "Win!")
+                    # self.show_game_result("You", "Win!")
+                    pass
                 elif game_state_result == 'lose':
                     self.show_game_result("You", "Lose!")
     
